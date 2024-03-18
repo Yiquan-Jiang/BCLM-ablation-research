@@ -1,0 +1,1490 @@
+#总体####
+setwd("E:/breast cancer/output/不可切除的乳腺癌肝转移瘤接受消融是否获益/20240114/")
+getwd()
+mydata <- BCLM_final10 %>%
+  filter(post_drug != 0 | 消融 != 0 ) %>%
+  filter(post_drug != 0) %>%
+  filter(n_Resection ==0 & n_TACE ==0 & n_HAIC ==0 ) %>%
+  filter(Tumer_size<= 50 )%>%
+  mutate(is_Ablation =ifelse(消融 > 0,1,0) )%>%
+  mutate(is_Ablation=
+           factor(is_Ablation, 
+                  levels = c(0, 1), 
+                  labels = c("Drug", "Albation")) )
+mydata1 <- mydata
+columns_with_na <- colnames(mydata1)[apply(is.na(mydata1), 2, any)]
+columns_with_na
+# # > columns_with_na
+# [1] "AgeWhenBC"         "BC_diagnosis date" "status"           
+# [4] "AJCC"              "AJCC_state"        "Tumer_position"   
+# [7] "Synchronicity"     "follow_time_BC"
+columns_to_replace <- c("status","AJCC_state","Synchronicity")  # 在这里添加你需要替换的列的名称
+
+# 使用循环将数据框中特定列中的字符串"unknown"替换为NA
+for (col in columns_to_replace) {
+  print(col)
+  mydata1[[col]][is.na(mydata1[[col]])] <- "unknown"
+}
+
+columns_to_check <- c("AgeWhenBC", "Tumer_position")
+
+# 循环检查并删除包含缺失值的行
+for (col in columns_to_check) {
+  print(col)
+  mydata1 <- mydata1[complete.cases(mydata1[, col]), ]
+}
+mydata2 <- mydata1
+library(gtsummary)
+library(gt)
+
+Baseline_Table <-  mydata2 %>%
+  as.data.frame() %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis ~ 1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_Table")
+
+Baseline_Table
+
+library(flextable)
+
+Baseline_Table1 <- Baseline_Table %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_Table1, path = "./Baseline_Table.docx")
+
+mydata2$live <- ifelse(mydata2$death==1,0,1)
+
+library(survminer)
+library(survival) 
+
+#计算总体中位随访时间四分位数
+fit_all_followup_BC <- quantile(survfit(Surv(follow_time_BC,death==0) ~ 1,  # 创建生存对象 
+                                        data = mydata2))
+fit_all_followup_BC
+# $quantile
+# 25        50        75 
+# 48.86667  89.12301 155.48681 
+
+fit_all_followup_BCLM <- quantile(survfit(Surv(follow_time_BCLM,death==0) ~ 1,  # 创建生存对象 
+                                          data = mydata2))
+fit_all_followup_BCLM
+# $quantile
+# 25       50       75 
+# 17.70000 39.63333 69.36667 
+
+
+#计算两组中位随访时间四分位数
+fit_group_followup_BC <- quantile(survfit(Surv(follow_time_BC,death==0) ~ is_Ablation,  # 创建生存对象 
+                                          data = mydata2))
+fit_group_followup_BC
+# $quantile
+# 25       50       75
+# is_Ablation=Drug     46.08641 89.12301 155.8150
+# is_Ablation=Albation 62.30000 89.22072 155.4868
+fit_group_followup_BCLM <- quantile(survfit(Surv(follow_time_BCLM,death==0) ~ is_Ablation,  # 创建生存对象 
+                                            data = mydata2))
+fit_group_followup_BCLM
+# $quantile
+# 25       50        75
+# is_Ablation=Drug     16.56404 34.83333  58.92435
+# is_Ablation=Albation 29.03333 61.86667 111.16527
+res.cox <- coxph(Surv(follow_time_BCLM,death) ~ is_Ablation, data = mydata2)
+summary(res.cox)
+# coef exp(coef) se(coef)      z Pr(>|z|)    
+# is_AblationAlbation -0.7247    0.4845   0.1553 -4.667 3.05e-06 ***
+#   ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# exp(coef) exp(-coef) lower .95 upper .95
+# is_AblationAlbation    0.4845      2.064    0.3574    0.6568
+#计算两组中位随访时间差异
+library(ComparisonSurv)	
+##Overall.test (mydata2$follow_time_BCLM, mydata2$live, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.13876, chisq =2.1917.
+# 
+# method statistic  pvalue
+# 1            Log-rank  17.82758 0.00002
+# 2      Gehan-Wilcoxon   3.86249 0.00011
+# 3         Tarone-Ware   4.21447 0.00003
+# 4         Weighted KM   4.46449 0.00001
+# 5                 ABS   2.85208 0.00434
+# 6     ABS permutation   2.85208 0.00600
+# 7           Two-stage        NA 0.00002
+# 8 Squared differences  -4.10381 0.00004
+# 9    RMST (tau= 253 )   25.1593 0.00130
+
+
+##Overall.test (mydata2$follow_time_BC, mydata2$live, mydata2$n_Ablation)		
+
+
+Overall.test (mydata2$follow_time_BCLM, mydata2$death, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.02238, chisq =5.21576.
+# 
+# method statistic  pvalue
+# 1                      Log-rank  15.91881 0.00007
+# 2                Gehan-Wilcoxon   4.30632 0.00002
+# 3                   Tarone-Ware   4.30815 0.00002
+# 4                   Weighted KM    4.3229 0.00002
+# 5                           ABS   4.03571 0.00005
+# 6               ABS permutation   4.03571 0.02600
+# 7                     Two-stage        NA 0.00007
+# 8           Squared differences  -4.23584 0.00002
+# 9 RMST (tau= 136.745841820988 )  28.11905 0.00070
+
+Overall.test (mydata2$follow_time_BC, mydata2$death, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.02178, chisq =5.26298.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   6.13476 0.01325
+# 2                Gehan-Wilcoxon    3.1996 0.00138
+# 3                   Tarone-Ware   2.93757 0.00331
+# 4                   Weighted KM    2.8013 0.00509
+# 5                           ABS   1.48842 0.13664
+# 6               ABS permutation   1.48842 0.09200
+# 7                     Two-stage        NA 0.01325
+# 8           Squared differences  -2.62804 0.00859
+# 9 RMST (tau= 267.133333333333 )  32.21749 0.05191
+
+
+fit_all_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ 1,  # 创建生存对象 
+                                 data = mydata2)
+fit_all_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# [1,] 787    409   31.5      29    35.4
+summary(fit_all_survival_BCLM,time=60)
+# time n.risk n.event survival std.err lower 95% CI upper 95% CI
+# 60     41     148    0.328  0.0352        0.265        0.404
+
+fit_group_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ is_Ablation,  # 创建生存对象 
+                                   data = mydata2)
+fit_group_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     687    361   28.9    27.1    31.6
+# is_Ablation=Albation 100     48   51.6    45.2    75.9
+
+ggsurvplot(fit_group_survival_BCLM, # 创建的拟合对象
+           data = mydata2,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval =T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "Survival_Plot_BCLM", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation")  ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+summary(fit_group_survival_BCLM,time=60)
+# is_Ablation=Drug 
+# time       n.risk      n.event     survival      std.err lower 95% CI upper 95% CI 
+# 60.0000      35.0000     348.0000       0.2159       0.0238       0.1739       0.2681 
+# 
+# is_Ablation=Albation 
+# time       n.risk      n.event     survival      std.err lower 95% CI upper 95% CI 
+# 60.0000      26.0000      41.0000       0.4617       0.0591       0.3593       0.5933 
+
+Fixpoint.test (mydata2$follow_time_BCLM, mydata2$death, mydata2$n_Ablation, t0 = 60) 
+# $test
+# method statistic  pvalue
+# 1         Naive  14.88909 0.00011
+# 2           Log  20.22651 0.00001
+# 3       Cloglog  14.38939 0.00015
+# 4 Arcsin-square  16.00195 0.00006
+# 5         Logit  16.91361 0.00004
+
+
+fit_all_survival_BC <- survfit(Surv(follow_time_BC,death==1) ~ 1,  # 创建生存对象 
+                               data = mydata2)
+fit_all_survival_BC
+# n events median 0.95LCL 0.95UCL
+# [1,] 787    409   78.7    74.2    89.7
+summary(fit_all_survival_BC,time=60)
+# time n.risk n.event survival std.err lower 95% CI upper 95% CI
+# 60    340     240    0.637   0.019        0.601        0.676
+
+fit_group_survival_BC <- survfit(Surv(follow_time_BC,death==1) ~ is_Ablation,  # 创建生存对象 
+                                 data = mydata2)
+fit_group_survival_BC
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     687    361   76.3    70.1      86
+# is_Ablation=Albation 100     48  104.5    83.0     153
+
+
+
+survivalplot <- ggsurvplot(fit_group_survival_BC, # 创建的拟合对象
+                           data = mydata2,  # 指定变量数据来源
+                           #conf.int = TRUE, # 显示置信区间
+                           pval =T, # 添加P值
+                           surv.median.line = "hv",  # 添加中位生存时间线
+                           risk.table = TRUE, # 添加风险表
+                           xlab = "Follow up time(m)", # 指定x轴标签
+                           #legend = c(0.8,0.75), # 指定图例位置
+                           title = "Survival_Plot_BC", # 设置图例标题，这里设置不显示标题，用空格替代
+                           legend.labs = c("Drug", "Ablation"),          
+                           ggtheme = theme_bw(), # Change ggplot2 theme
+                           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+survivalplot
+
+
+#1:2匹配####
+df_matchit_results1 <-
+  MatchIt::matchit(
+    is_Ablation ~ AgeWhenBC+AgeWhenBCLM+Time_between_metastasis+Tumer_number+Tumer_size+Tumer_position+status+Tumor+N+M+AJCC_state+Synchronicity+
+      pre_bone_M_treatment+pre_CDK46_targeted+pre_n_Chemo_group+pre_n_Endocrine_therapy_group+pre_HER_2_targeted+pre_ICI+pre_Targeted_therapy+pre_TKI_VEGFRi+post_bone_M_treatment+post_CDK46_targeted+post_n_Chemo_group+post_n_Endocrine_therapy_group+post_HER_2_targeted+post_ICI+post_PARPi+post_Targeted_therapy+post_TKI_VEGFRi
+    ,data = mydata2,
+    method = "nearest",
+    distance = "glm",
+    link = "logit",
+    caliper = 0.25, # starting typically with 0.25
+    std.caliper = TRUE,
+    replace = FALSE,
+    ratio = 2
+  )
+
+# Extract matched data for analysis and rename variable "subclass" to "matched_group_id"
+df_post_match1 <- MatchIt::match.data(df_matchit_results1) %>%
+  rename(matched_group_id=subclass)
+
+gts_post_match1 <-
+  df_post_match1 %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation) %>%
+  add_difference(
+    test = everything() ~ "smd",
+    estimate_fun = ~partial(style_sigfig, digits = 3)
+  ) %>%
+  modify_header(
+    all_stat_cols() ~ "**{level}**  \nN= {n}",
+    estimate ~ "**SMD**" # rename Difference to SMD
+  ) %>% 
+  modify_column_hide(columns = ci) # remove 95%CI
+
+gts_post_match1
+gts_post_match1%>%
+  as_gt()    %>%
+  gtsave(filename = "Baseline_table_psm_SMD_1vs2.docx")
+
+Baseline_table_psm1 <- df_post_match1 %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis ~ 1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_table_psm")
+Baseline_table_psm1
+Baseline_table_psm2 <- Baseline_table_psm1 %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_table_psm2, path = "./Baseline_table_psm.docx")
+
+Overall.test (df_post_match1$follow_time_BCLM, df_post_match1$death, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.15381, chisq =2.03406.
+# 
+# method statistic  pvalue
+# 1                      Log-rank  15.27872 0.00009
+# 2                Gehan-Wilcoxon   3.97344 0.00007
+# 3                   Tarone-Ware   4.06724 0.00005
+# 4                   Weighted KM   3.97963 0.00007
+# 5                           ABS   4.12643 0.00004
+# 6               ABS permutation   4.12643 0.00200
+# 7                     Two-stage        NA 0.00009
+# 8           Squared differences   -0.0682 0.94563
+# 9 RMST (tau= 126.648059799383 )   23.5304 0.00042
+
+Overall.test (df_post_match1$follow_time_BC, df_post_match1$death, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.36476, chisq =0.82145.
+# 
+# method statistic  pvalue
+# 1                     Log-rank    4.2455 0.03935
+# 2               Gehan-Wilcoxon   2.33256 0.01967
+# 3                  Tarone-Ware   2.22673 0.02597
+# 4                  Weighted KM   2.14634 0.03185
+# 5                          ABS   1.16057 0.24582
+# 6              ABS permutation   1.16057 0.10600
+# 7                    Two-stage        NA 0.29043
+# 8          Squared differences  -2.86169 0.00421
+# 9 RMST (tau= 230.95249691358 )  21.31241 0.06100
+
+fit_all_followup_BC_PSM <- quantile(survfit(Surv(follow_time_BC,death==0) ~ 1,  # 创建生存对象 
+                                            data = df_post_match1))
+fit_all_followup_BC_PSM
+# $quantile
+# 25        50        75 
+# 50.05770  90.86667 155.48681 
+
+
+fit_group_followup_BC_PSM <- quantile(survfit(Surv(follow_time_BC,death==0) ~ is_Ablation,  # 创建生存对象 
+                                              data = df_post_match1))
+fit_group_followup_BC_PSM
+# $quantile
+# 25        50       75
+# is_Ablation=Drug     44.20000  90.86667 146.7333
+# is_Ablation=Albation 60.22356 100.91403 155.4868
+
+
+fit_group_survival_BCLM_PSM <- survfit(Surv(follow_time_BCLM,death) ~ is_Ablation,  # 创建生存对象 
+                                       data = df_post_match1)
+fit_group_survival_BCLM_PSM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     157     83   30.7    27.1    40.5
+# is_Ablation=Albation  96     46   56.8    45.2    82.4
+res.cox <- coxph(Surv(follow_time_BCLM,death) ~ is_Ablation, data = df_post_match1)
+summary(res.cox)
+# n= 253, number of events= 129 
+# 
+# coef exp(coef) se(coef)      z Pr(>|z|)    
+# is_AblationAlbation -0.7161    0.4886   0.1867 -3.835 0.000125 ***
+#   ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# exp(coef) exp(-coef) lower .95 upper .95
+# is_AblationAlbation    0.4886      2.047    0.3389    0.7046
+ggsurvplot(fit_group_survival_BCLM_PSM, # 创建的拟合对象
+           data = df_post_match1,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval = T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "SurvivalPlotPSM_1vs2_BCLM", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation"),          
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+fit_group_survival_BC_PSM <- survfit(Surv(follow_time_BC,death) ~ is_Ablation,  # 创建生存对象 
+                                     data = df_post_match1)
+fit_group_survival_BC_PSM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     157     83   80.6    67.0     104
+# is_Ablation=Albation  96     46  104.5    80.7     153
+
+ggsurvplot(fit_group_survival_BC_PSM, # 创建的拟合对象
+           data = df_post_match1,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval = T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           legend = c(0.8,0.75), # 指定图例位置
+           title = "SurvivalPlotPSM_1vs2_BC", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation"),          
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+#不可切除####
+setwd("E:/breast cancer/output/不可切除的乳腺癌肝转移瘤接受消融是否获益/20240114/不可切除")
+getwd()
+mydata1 <- mydata %>%
+  filter(Tumer_number > 2 ) %>%
+  filter(Tumer_position == 3 )
+columns_with_na <- colnames(mydata1)[apply(is.na(mydata1), 2, any)]
+columns_with_na
+# [1] "AgeWhenBC"         "BC_diagnosis date" "status"           
+# [4] "AJCC"              "AJCC_state"        "Synchronicity"    
+# [7] "follow_time_BC"   
+
+columns_to_replace <- c("status","AJCC_state","Synchronicity")  # 在这里添加你需要替换的列的名称
+
+# 使用循环将数据框中特定列中的字符串"unknown"替换为NA
+for (col in columns_to_replace) {
+  print(col)
+  mydata1[[col]][is.na(mydata1[[col]])] <- "unknown"
+}
+
+columns_to_check <- c("AgeWhenBC")
+
+# 循环检查并删除包含缺失值的行
+for (col in columns_to_check) {
+  print(col)
+  mydata1 <- mydata1[complete.cases(mydata1[, col]), ]
+}
+mydata2 <- mydata1
+library(gtsummary)
+library(gt)
+
+Baseline_Table <-  mydata2 %>%
+  as.data.frame() %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_size,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis~1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_Table")
+
+Baseline_Table
+
+library(flextable)
+
+Baseline_Table1 <- Baseline_Table %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_Table1, path = "./Baseline_Table.docx")
+
+mydata2$live <- ifelse(mydata2$death==1,0,1)
+
+library(survminer)
+library(survival) 
+
+fit_all_followup_BC <- quantile(survfit(Surv(follow_time_BC,death==0) ~ 1,  # 创建生存对象 
+                                        data = mydata2))
+fit_all_followup_BC
+# $quantile
+# 25        50        75 
+# 48.36667  90.33333 165.30000 
+
+fit_all_followup_BCLM <- quantile(survfit(Surv(follow_time_BCLM,death==0) ~ 1,  # 创建生存对象 
+                                          data = mydata2))
+fit_all_followup_BCLM
+# $quantile
+# 25       50       75 
+# 17.70000 34.68069 58.26667 
+
+#计算两组中位随访时间四分位数
+fit_group_followup_BC <- quantile(survfit(Surv(follow_time_BC,death==0) ~ is_Ablation,  # 创建生存对象 
+                                          data = mydata2))
+fit_group_followup_BC
+# $quantile
+# 25        50       75
+# is_Ablation=Drug     45.07897  89.12301 153.2781
+# is_Ablation=Albation 71.63333 129.87971       NA
+
+fit_group_followup_BCLM <- quantile(survfit(Surv(follow_time_BCLM,death==0) ~ is_Ablation,  # 创建生存对象 
+                                            data = mydata2))
+fit_group_followup_BCLM
+# $quantile
+# 25       50        75
+# is_Ablation=Drug     15.91451 34.21590  53.93333
+# is_Ablation=Albation 32.25394 79.33333 111.16527
+res.cox <- coxph(Surv(follow_time_BCLM,death) ~ is_Ablation, data = mydata2)
+summary(res.cox)
+# coef exp(coef) se(coef)      z Pr(>|z|)
+# is_AblationAlbation -0.3471    0.7067   0.2349 -1.478     0.14
+# 
+# exp(coef) exp(-coef) lower .95 upper .95
+# is_AblationAlbation    0.7067      1.415     0.446      1.12
+#计算两组中位随访时间差异
+library(ComparisonSurv)	
+Overall.test (mydata2$follow_time_BCLM, mydata2$live, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.49113, chisq =0.47404.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   9.90571 0.00165
+# 2                Gehan-Wilcoxon   2.63835 0.00833
+# 3                   Tarone-Ware    2.9321 0.00337
+# 4                   Weighted KM    3.7117 0.00021
+# 5                           ABS   3.85702 0.00011
+# 6               ABS permutation   3.85702 0.02600
+# 7                     Two-stage        NA 0.00165
+# 8           Squared differences  -3.17831 0.00148
+# 9 RMST (tau= 124.529722608025 )  34.22987 0.00075
+
+Overall.test (mydata2$follow_time_BC, mydata2$live, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.2003, chisq =1.64019.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   1.66038 0.19755
+# 2                Gehan-Wilcoxon    1.7081 0.08762
+# 3                   Tarone-Ware   1.56772 0.11695
+# 4                   Weighted KM   1.56487 0.11761
+# 5                           ABS  -0.32917 0.74203
+# 6               ABS permutation  -0.32917 0.72800
+# 7                     Two-stage        NA 0.10719
+# 8           Squared differences  -1.30947 0.19038
+# 9 RMST (tau= 189.979166666667 )  17.30714 0.22428
+
+Overall.test (mydata2$follow_time_BCLM, mydata2$death, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.54137, chisq =0.373.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   2.19991 0.13802
+# 2                Gehan-Wilcoxon   1.54488 0.12237
+# 3                   Tarone-Ware   1.58741 0.11242
+# 4                   Weighted KM   1.59643 0.11039
+# 5                           ABS   0.44922 0.65327
+# 6               ABS permutation   0.44922 0.69200
+# 7                     Two-stage        NA 0.78167
+# 8           Squared differences  -1.59114 0.11158
+# 9 RMST (tau= 119.346372685185 )  10.47157 0.18578
+
+Overall.test (mydata2$follow_time_BC, mydata2$death, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.20809, chisq =1.58469.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   0.01504 0.90239
+# 2                Gehan-Wilcoxon   0.42469 0.67106
+# 3                   Tarone-Ware   0.26099 0.79410
+# 4                   Weighted KM   0.20319 0.83899
+# 5                           ABS  -0.10242 0.91842
+# 6               ABS permutation  -0.10242 0.89600
+# 7                     Two-stage        NA 0.25534
+# 8           Squared differences    0.1369 0.89111
+# 9 RMST (tau= 259.733333333333 )  -7.09751 0.56930
+
+
+fit_all_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ 1,  # 创建生存对象 
+                                 data = mydata2)
+fit_all_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# [1,] 462    250   28.3    25.4    31.8
+
+fit_group_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ is_Ablation,  # 创建生存对象 
+                                   data = mydata2)
+fit_group_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     431    230   28.0    25.2    31.3
+# is_Ablation=Albation  31     20   37.2    26.4    89.7
+
+ggsurvplot(fit_group_survival_BCLM, # 创建的拟合对象
+           data = mydata2,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval =T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "Survival_Plot_BCLM", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation") ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+fit_all_survival_BC <- survfit(Surv(follow_time_BC,death==1) ~ 1,  # 创建生存对象 
+                               data = mydata2)
+fit_all_survival_BC
+# n events median 0.95LCL 0.95UCL
+# [1,] 462    250   74.9    69.2    86.7
+
+fit_group_survival_BC <- survfit(Surv(follow_time_BC,death==1) ~ is_Ablation,  # 创建生存对象 
+                                 data = mydata2)
+fit_group_survival_BC
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     431    230   74.5    67.2    86.7
+# is_Ablation=Albation  31     20   80.7    51.2      NA
+
+
+ggsurvplot(fit_group_survival_BC, # 创建的拟合对象
+           data = mydata2,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval =T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "Survival_Plot_BC", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation") ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+#1:2
+df_matchit_results1 <-
+  MatchIt::matchit(
+    is_Ablation ~ AgeWhenBC+AgeWhenBCLM+Time_between_metastasis+Tumer_size+status+Tumor+N+M+AJCC_state+Synchronicity+
+      pre_bone_M_treatment+pre_CDK46_targeted+pre_n_Chemo_group+pre_n_Endocrine_therapy_group+pre_HER_2_targeted+pre_ICI+pre_Targeted_therapy+pre_TKI_VEGFRi+post_bone_M_treatment+post_CDK46_targeted+post_n_Chemo_group+post_n_Endocrine_therapy_group+post_HER_2_targeted+post_ICI+post_PARPi+post_Targeted_therapy+post_TKI_VEGFRi
+    ,data = mydata2,
+    method = "nearest",
+    distance = "glm",
+    link = "logit",
+    caliper = 0.25, # starting typically with 0.25
+    std.caliper = TRUE,
+    replace = FALSE,
+    ratio = 2
+  )
+
+# Extract matched data for analysis and rename variable "subclass" to "matched_group_id"
+df_post_match1 <- MatchIt::match.data(df_matchit_results1) %>%
+  rename(matched_group_id=subclass)
+
+gts_post_match1 <-
+  df_post_match1 %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation) %>%
+  add_difference(
+    test = everything() ~ "smd",
+    estimate_fun = ~partial(style_sigfig, digits = 3)
+  ) %>%
+  modify_header(
+    all_stat_cols() ~ "**{level}**  \nN= {n}",
+    estimate ~ "**SMD**" # rename Difference to SMD
+  ) %>% 
+  modify_column_hide(columns = ci) # remove 95%CI
+
+gts_post_match1
+gts_post_match1%>%
+  as_gt()    %>%
+  gtsave(filename = "Baseline_table_psm_SMD_1vs2.docx")
+
+Baseline_table_psm1 <- df_post_match1 %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_size,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis~1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_table_psm")
+Baseline_table_psm1
+Baseline_table_psm2 <- Baseline_table_psm1 %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_table_psm2, path = "./Baseline_table_psm.docx")
+
+
+res.cox <- coxph(Surv(follow_time_BCLM,death) ~ is_Ablation, data = df_post_match1)
+summary(res.cox)
+
+# coef exp(coef) se(coef)      z Pr(>|z|)
+# is_AblationAlbation -0.2942    0.7451   0.3048 -0.965    0.335
+# 
+# exp(coef) exp(-coef) lower .95 upper .95
+# is_AblationAlbation    0.7451      1.342      0.41     1.354
+
+Overall.test (df_post_match1$follow_time_BCLM, df_post_match1$death, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.41696, chisq =0.65886.
+# 
+# method statistic  pvalue
+# 1                      Log-rank    0.9376 0.33290
+# 2                Gehan-Wilcoxon   1.16747 0.24302
+# 3                   Tarone-Ware     1.143 0.25304
+# 4                   Weighted KM   1.00268 0.31601
+# 5                           ABS  -0.27098 0.78641
+# 6               ABS permutation  -0.27098 0.76800
+# 7                     Two-stage        NA 0.57114
+# 8           Squared differences  -1.73042 0.08356
+# 9 RMST (tau= 103.733333333333 )   8.08491 0.37268
+
+
+Overall.test (df_post_match1$follow_time_BC, df_post_match1$death, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.14983, chisq =2.07394.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   0.29285 0.58840
+# 2                Gehan-Wilcoxon   1.04453 0.29624
+# 3                   Tarone-Ware   0.94166 0.34637
+# 4                   Weighted KM   0.73744 0.46085
+# 5                           ABS   0.10761 0.91430
+# 6               ABS permutation   0.10761 0.86800
+# 7                     Two-stage        NA 0.47367
+# 8           Squared differences  -1.80236 0.07149
+# 9 RMST (tau= 225.933333333333 )  -2.49242 0.89373
+
+
+Overall.test (df_post_match1$follow_time_BCLM, df_post_match1$live, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.91765, chisq =0.01069.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   6.08532 0.01363
+# 2                Gehan-Wilcoxon   2.26093 0.02376
+# 3                   Tarone-Ware   2.33528 0.01953
+# 4                   Weighted KM   2.27186 0.02309
+# 5                           ABS   2.09428 0.03623
+# 6               ABS permutation   2.09428 0.04800
+# 7                     Two-stage        NA 0.01363
+# 8           Squared differences   -1.8587 0.06307
+# 9 RMST (tau= 119.346372685185 )   29.9198 0.01847
+
+
+Overall.test (df_post_match1$follow_time_BC, df_post_match1$live, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.60086, chisq =0.2737.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   2.73334 0.09827
+# 2                Gehan-Wilcoxon   1.78239 0.07469
+# 3                   Tarone-Ware   1.75146 0.07987
+# 4                   Weighted KM   1.91516 0.05547
+# 5                           ABS    0.5936 0.55278
+# 6               ABS permutation    0.5936 0.53800
+# 7                     Two-stage        NA 0.52826
+# 8           Squared differences  -1.93553 0.05292
+# 9 RMST (tau= 189.979166666667 )  31.99823 0.07564
+
+
+
+fit_all_followup_BC_PSM <- quantile(survfit(Surv(follow_time_BC,death==0) ~ 1,  # 创建生存对象 
+                                            data = df_post_match1))
+fit_all_followup_BC_PSM
+# $quantile
+# 25        50        75 
+# 58.50000  82.54734 138.93194 
+
+
+
+fit_group_followup_BC_PSM <- quantile(survfit(Surv(follow_time_BC,death==0) ~ is_Ablation,  # 创建生存对象 
+                                              data = df_post_match1))
+fit_group_followup_BC_PSM
+# $quantile
+# 25        50       75
+# is_Ablation=Drug     42.38881  82.54734 103.7333
+# is_Ablation=Albation 71.63333 129.87971       NA
+
+fit_all_survival_BCLM_PSM <- survfit(Surv(follow_time_BCLM,death) ~ 1,  # 创建生存对象 
+                                     data = df_post_match1)
+fit_all_survival_BCLM_PSM
+# n events median 0.95LCL 0.95UCL
+# [1,] 82     46   31.1    24.6    44.5
+
+fit_group_survival_BCLM_PSM <- survfit(Surv(follow_time_BCLM,death) ~ is_Ablation,  # 创建生存对象 
+                                       data = df_post_match1)
+fit_group_survival_BCLM_PSM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     54     28   28.1    19.8    44.5
+# is_Ablation=Albation 28     18   37.3    24.1    89.7
+
+
+
+ggsurvplot(fit_group_followup_BCLM_PSM, # 创建的拟合对象
+           data = df_post_match1,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval = T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(y)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "SurvivalPlotPSM_1vs2_BCLM", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation"),       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+fit_group_survival_BC_PSM <- survfit(Surv(follow_time_BC,death) ~ is_Ablation,  # 创建生存对象 
+                                     data = df_post_match1)
+fit_group_survival_BC_PSM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     54     28   63.1    40.9      NA
+# is_Ablation=Albation 28     18   80.7    47.6      NA
+
+
+
+ggsurvplot(fit_group_followup_BC_PSM, # 创建的拟合对象
+           data = df_post_match1,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval = T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(y)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "SurvivalPlotPSM_1vs2_BC", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation") ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+#可切除####
+setwd("E:/breast cancer/output/不可切除的乳腺癌肝转移瘤接受消融是否获益/20240114/可切除/")
+getwd()
+mydata1 <- mydata %>%
+  filter(Tumer_number > 2 ) %>%
+  filter(Tumer_position == 3 )
+
+mydata3 <- mydata %>%
+  anti_join(mydata1,by = "patient_sn")
+mydata1 <-mydata3
+
+columns_with_na <- colnames(mydata1)[apply(is.na(mydata1), 2, any)]
+columns_with_na
+# [1] "AgeWhenBC"         "BC_diagnosis date" "status"           
+# [4] "AJCC"              "AJCC_state"        "Tumer_position"   
+# [7] "Synchronicity"     "follow_time_BC"   
+
+columns_to_replace <- c("status","AJCC_state","Synchronicity")  # 在这里添加你需要替换的列的名称
+
+# 使用循环将数据框中特定列中的字符串"unknown"替换为NA
+for (col in columns_to_replace) {
+  print(col)
+  mydata1[[col]][is.na(mydata1[[col]])] <- "unknown"
+}
+
+columns_to_check <- c("AgeWhenBC","Tumer_position")
+
+# 循环检查并删除包含缺失值的行
+for (col in columns_to_check) {
+  print(col)
+  mydata1 <- mydata1[complete.cases(mydata1[, col]), ]
+}
+mydata2 <- mydata1
+library(gtsummary)
+library(gt)
+
+Baseline_Table <-  mydata2 %>%
+  as.data.frame() %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_position,Tumer_size,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis~1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_Table")
+
+Baseline_Table
+
+library(flextable)
+
+Baseline_Table1 <- Baseline_Table %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_Table1, path = "./Baseline_Table.docx")
+
+mydata2$live <- ifelse(mydata2$death==1,0,1)
+
+library(survminer)
+library(survival) 
+
+fit_all_followup_BC <- quantile(survfit(Surv(follow_time_BC,death==0) ~ 1,  # 创建生存对象 
+                                        data = mydata2))
+fit_all_followup_BC
+# $quantile
+# 25        50        75 
+# 48.86667  87.86667 155.48681 
+
+
+fit_all_followup_BCLM <- quantile(survfit(Surv(follow_time_BCLM,death==0) ~ 1,  # 创建生存对象 
+                                          data = mydata2))
+fit_all_followup_BCLM
+# $quantile
+# 25       50       75 
+# 18.30000 48.18860 71.31545 
+
+
+
+#计算两组中位随访时间四分位数
+fit_group_followup_BC <- quantile(survfit(Surv(follow_time_BC,death==0) ~ is_Ablation,  # 创建生存对象 
+                                          data = mydata2))
+fit_group_followup_BC
+# $quantile
+# 25       50       75
+# is_Ablation=Drug     46.08641 87.96667 155.8150
+# is_Ablation=Albation 57.74918 87.86667 155.4868
+
+
+fit_group_followup_BCLM <- quantile(survfit(Surv(follow_time_BCLM,death==0) ~ is_Ablation,  # 创建生存对象 
+                                            data = mydata2))
+fit_group_followup_BCLM
+# $quantile
+# 25       50       75
+# is_Ablation=Drug     16.94488 38.53333 70.56667
+# is_Ablation=Albation 28.40000 61.44690 97.24737
+
+res.cox <- coxph(Surv(follow_time_BCLM,death) ~ is_Ablation, data = mydata2)
+summary(res.cox)
+# coef exp(coef) se(coef)      z Pr(>|z|)    
+# is_AblationAlbation -0.8170    0.4417   0.2102 -3.886 0.000102 ***
+#   ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# exp(coef) exp(-coef) lower .95 upper .95
+# is_AblationAlbation    0.4417      2.264    0.2926     0.667
+#计算两组中位随访时间差异
+library(ComparisonSurv)	
+Overall.test (mydata2$follow_time_BCLM, mydata2$live, mydata2$n_Ablation)		
+
+Overall.test (mydata2$follow_time_BC, mydata2$live, mydata2$n_Ablation)		
+
+Overall.test (mydata2$follow_time_BCLM, mydata2$death, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.02238, chisq =5.21576.
+# 
+# method statistic  pvalue
+# 1                      Log-rank  15.91881 0.00007
+# 2                Gehan-Wilcoxon   4.30632 0.00002
+# 3                   Tarone-Ware   4.30815 0.00002
+# 4                   Weighted KM    4.3229 0.00002
+# 5                           ABS   4.03571 0.00005
+# 6               ABS permutation   4.03571 0.02600
+# 7                     Two-stage        NA 0.00007
+# 8           Squared differences  -4.23584 0.00002
+# 9 RMST (tau= 136.745841820988 )  28.11905 0.00070
+
+
+
+Overall.test (mydata2$follow_time_BC, mydata2$death, mydata2$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.02178, chisq =5.26298.
+# 
+# method statistic  pvalue
+# 1                      Log-rank   6.13476 0.01325
+# 2                Gehan-Wilcoxon    3.1996 0.00138
+# 3                   Tarone-Ware   2.93757 0.00331
+# 4                   Weighted KM    2.8013 0.00509
+# 5                           ABS   1.48842 0.13664
+# 6               ABS permutation   1.48842 0.09200
+# 7                     Two-stage        NA 0.01325
+# 8           Squared differences  -2.62804 0.00859
+# 9 RMST (tau= 267.133333333333 )  32.21749 0.05191
+
+
+fit_all_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ 1,  # 创建生存对象 
+                                 data = mydata2)
+fit_all_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# [1,] 325    159   44.9    34.6    48.9
+
+
+
+fit_group_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ is_Ablation,  # 创建生存对象 
+                                   data = mydata2)
+fit_group_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     256    131   30.9    27.8    45.3
+# is_Ablation=Albation  69     28   65.5    49.3      NA
+
+
+
+ggsurvplot(fit_group_survival_BCLM, # 创建的拟合对象
+           data = mydata2,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval =T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "Survival_Plot_BCLM", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation") ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+fit_all_survival_BC <- survfit(Surv(follow_time_BC,death==1) ~ 1,  # 创建生存对象 
+                               data = mydata2)
+fit_all_survival_BC
+# n events median 0.95LCL 0.95UCL
+# [1,] 325    159   83.5    75.6     104
+
+
+
+fit_group_survival_BC <- survfit(Surv(follow_time_BC,death==1) ~ is_Ablation,  # 创建生存对象 
+                                 data = mydata2)
+fit_group_survival_BC
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     256    131   80.6    68.9    97.1
+# is_Ablation=Albation  69     28  115.9    83.0      NA
+
+
+
+ggsurvplot(fit_group_survival_BC, # 创建的拟合对象
+           data = mydata2,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval =T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "Survival_Plot_BC", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation"),       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+#1:2
+df_matchit_results1 <-
+  MatchIt::matchit(
+    is_Ablation ~ AgeWhenBC+AgeWhenBCLM+Time_between_metastasis+Tumer_number+Tumer_position+Tumer_size+status+Tumor+N+M+AJCC_state+Synchronicity+
+      pre_bone_M_treatment+pre_CDK46_targeted+pre_n_Chemo_group+pre_n_Endocrine_therapy_group+pre_HER_2_targeted+pre_Targeted_therapy+pre_TKI_VEGFRi+post_bone_M_treatment+post_CDK46_targeted+post_n_Chemo_group+post_n_Endocrine_therapy_group+post_HER_2_targeted+post_ICI+post_PARPi+post_Targeted_therapy+post_TKI_VEGFRi
+    ,data = mydata2,
+    method = "nearest",
+    distance = "glm",
+    link = "logit",
+    caliper = 0.25, # starting typically with 0.25
+    std.caliper = TRUE,
+    replace = FALSE,
+    ratio = 2
+  )
+
+# Extract matched data for analysis and rename variable "subclass" to "matched_group_id"
+df_post_match1 <- MatchIt::match.data(df_matchit_results1) %>%
+  rename(matched_group_id=subclass)
+
+gts_post_match1 <-
+  df_post_match1 %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation) %>%
+  add_difference(
+    test = everything() ~ "smd",
+    estimate_fun = ~partial(style_sigfig, digits = 3)
+  ) %>%
+  modify_header(
+    all_stat_cols() ~ "**{level}**  \nN= {n}",
+    estimate ~ "**SMD**" # rename Difference to SMD
+  ) %>% 
+  modify_column_hide(columns = ci) # remove 95%CI
+
+gts_post_match1
+gts_post_match1%>%
+  as_gt()    %>%
+  gtsave(filename = "Baseline_table_psm_SMD_1vs2.docx")
+
+Baseline_table_psm1 <- df_post_match1 %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_position,Tumer_size,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis~1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_table_psm")
+Baseline_table_psm1
+Baseline_table_psm2 <- Baseline_table_psm1 %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_table_psm2, path = "./Baseline_table_psm.docx")
+
+res.cox <- coxph(Surv(follow_time_BCLM,death) ~ is_Ablation, data = df_post_match1)
+summary(res.cox)
+# coef exp(coef) se(coef)      z Pr(>|z|)    
+# is_AblationAlbation -0.8744    0.4171   0.2438 -3.586 0.000335 ***
+#   ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# exp(coef) exp(-coef) lower .95 upper .95
+# is_AblationAlbation    0.4171      2.397    0.2587    0.6727
+Overall.test (df_post_match1$follow_time_BCLM, df_post_match1$death, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.23548, chisq =1.40744.
+# 
+# method statistic  pvalue
+# 1                      Log-rank  13.56962 0.00023
+# 2                Gehan-Wilcoxon   3.71023 0.00021
+# 3                   Tarone-Ware   3.77796 0.00016
+# 4                   Weighted KM   3.68989 0.00022
+# 5                           ABS   3.89095 0.00010
+# 6               ABS permutation   3.89095 0.00800
+# 7                     Two-stage        NA 0.00023
+# 8           Squared differences   0.09659 0.92305
+# 9 RMST (tau= 115.580018132716 )  25.50791 0.00047
+
+
+
+Overall.test (df_post_match1$follow_time_BC, df_post_match1$death, df_post_match1$n_Ablation)		
+# PH assumption yield a result of: Pvalue =0.20834, chisq =1.58292.
+# 
+# method statistic  pvalue
+# 1                     Log-rank   3.97859 0.04608
+# 2               Gehan-Wilcoxon   2.51528 0.01189
+# 3                  Tarone-Ware   2.28738 0.02217
+# 4                  Weighted KM   2.06977 0.03847
+# 5                          ABS   1.01726 0.30903
+# 6              ABS permutation   1.01726 0.13600
+# 7                    Two-stage        NA 0.16178
+# 8          Squared differences  -3.34148 0.00083
+# 9 RMST (tau= 230.95249691358 )  25.53831 0.08877
+
+
+#Overall.test (df_post_match1$follow_time_BCLM, df_post_match1$live, df_post_match1$n_Ablation)		
+
+
+
+#Overall.test (df_post_match1$follow_time_BC, df_post_match1$live, df_post_match1$n_Ablation)		
+
+
+
+fit_all_followup_BC_PSM <- quantile(survfit(Surv(follow_time_BC,death==0) ~ 1,  # 创建生存对象 
+                                            data = df_post_match1))
+fit_all_followup_BC_PSM
+# $quantile
+# 25        50        75 
+# 48.86667  87.67812 163.10000 
+
+
+
+
+fit_group_followup_BC_PSM <- quantile(survfit(Surv(follow_time_BC,death==0) ~ is_Ablation,  # 创建生存对象 
+                                              data = df_post_match1))
+fit_group_followup_BC_PSM
+# $quantile
+# 25       50       75
+# is_Ablation=Drug     42.70000 70.63333 166.2467
+# is_Ablation=Albation 57.74918 87.86667 155.4868
+
+fit_group_survival_BCLM_PSM <- survfit(Surv(follow_time_BCLM,death) ~ is_Ablation,  # 创建生存对象 
+                                       data = df_post_match1)
+fit_group_survival_BCLM_PSM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     98     49   40.5    27.9    45.6
+# is_Ablation=Albation 67     28   57.5    46.4      NA
+
+ggsurvplot(fit_group_survival_BCLM_PSM, # 创建的拟合对象
+           data = df_post_match1,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval = T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           title = "SurvivalPlotPSM_1vs2_BCLM", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation") ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+fit_group_survival_BC_PSM <- survfit(Surv(follow_time_BC,death) ~ is_Ablation,  # 创建生存对象 
+                                     data = df_post_match1)
+fit_group_survival_BC_PSM
+# n events median 0.95LCL 0.95UCL
+# is_Ablation=Drug     98     49   92.5      67     130
+# is_Ablation=Albation 67     28  115.9      83      NA
+
+
+
+ggsurvplot(fit_group_survival_BC_PSM, # 创建的拟合对象
+           data = df_post_match1,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval = T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           legend = c(0.8,0.75), # 指定图例位置
+           title = "SurvivalPlotPSM_1vs2_BC", # 设置图例标题，这里设置不显示标题，用空格替代
+           legend.labs = c("Drug", "Ablation") ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+
+#切除的患者去匹配消融的患者####
+setwd("E:/breast cancer/output/不可切除的乳腺癌肝转移瘤接受消融是否获益/20240114/切除vs消融更新/")
+getwd()
+data_Ablation <- mydata3 %>%
+  filter(is_Ablation == "Albation") %>%
+  select(1:73) %>%
+  mutate(is_Ablation="Ablation") 
+data_Resection <- test1 %>%
+  filter( n_Resection != 0 ) %>%
+  filter( n_Ablation ==0 & n_TACE ==0 & n_HAIC ==0 ) %>%
+  mutate(is_Ablation="Resection")   
+data_RvsA <- rbind(data_Ablation,data_Resection)
+
+columns_with_na <- colnames(data_RvsA)[apply(is.na(data_RvsA), 2, any)]
+columns_with_na
+# [1] "AgeWhenBC"               "Time_between_metastasis"
+# [3] "BC_diagnosis date"       "status"                 
+# [5] "AJCC"                    "AJCC_state"             
+# [7] "Synchronicity"           "follow_time_BC"  
+
+columns_to_replace <- c("status","AJCC_state","Synchronicity")  # 在这里添加你需要替换的列的名称
+
+# 使用循环将数据框中特定列中的字符串"unknown"替换为NA
+for (col in columns_to_replace) {
+  print(col)
+  data_RvsA[[col]][is.na(data_RvsA[[col]])] <- "unknown"
+}
+
+columns_to_check <- c("AgeWhenBC")
+
+# 循环检查并删除包含缺失值的行
+for (col in columns_to_check) {
+  print(col)
+  data_RvsA <- data_RvsA[complete.cases(data_RvsA[, col]), ]
+}
+data_RvsA1 <- data_RvsA %>%
+  filter(! post_drug == 0)
+
+library(gtsummary)
+library(gt)
+
+Baseline_Table <-  data_RvsA1 %>%
+  as.data.frame() %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_position,Tumer_size,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         Treatment) %>%
+  tbl_summary(by = Treatment,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis~1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_Table")
+
+Baseline_Table
+
+library(flextable)
+
+Baseline_Table1 <- Baseline_Table %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_Table1, path = "./Baseline_Table.docx")
+
+fit_group_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ is_Ablation,  # 创建生存对象 
+                                   data = data_RvsA1)
+fit_group_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# Treatment=Ablation  69     28   65.5    49.3      NA
+# Treatment=Resection 25     10   71.7    32.2      NA
+data_RvsA1 <- data_RvsA1%>%
+  mutate(is_Ablation = ifelse(Treatment=="Ablation",1,0))
+Overall.test (data_RvsA1$follow_time_BCLM, data_RvsA1$death, data_RvsA1$is_Ablation)		
+
+
+
+
+ggsurvplot(fit_group_survival_BCLM, # 创建的拟合对象
+           data = data_RvsA1,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval ="p= 0.873", # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           legend.labs = c("Ablation", "Resection"),
+           title = "Survival_Plot_BCLM" ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#457bb9", "#ba494b") # 设置图例标题，这里设置不显示标题，用空格替代
+) # 指定图例分组标签
+
+df_matchit_results <-
+  MatchIt::matchit(
+    is_Ablation ~ AgeWhenBC+AgeWhenBCLM+Tumer_number+Tumer_size+Tumer_position+Tumor+N+M+
+      pre_bone_M_treatment+pre_n_Chemo_group+pre_n_Endocrine_therapy_group+pre_HER_2_targeted+pre_ICI+pre_TKI_VEGFRi+post_bone_M_treatment+post_n_Chemo_group+post_n_Endocrine_therapy_group+post_HER_2_targeted+post_ICI+post_PARPi+post_Targeted_therapy+post_TKI_VEGFRi
+    ,data = data_RvsA1,
+    method = "nearest",
+    distance = "glm",
+    link = "logit",
+    caliper = 0.25, # starting typically with 0.25
+    std.caliper = TRUE,
+    replace = FALSE
+  )
+
+# Extract matched data for analysis and rename variable "subclass" to "matched_group_id"
+df_post_match <- MatchIt::match.data(df_matchit_results) %>%
+  rename(matched_group_id=subclass)
+
+gts_post_match <-
+  df_post_match %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation) %>%
+  add_difference(
+    test = everything() ~ "smd",
+    estimate_fun = ~partial(style_sigfig, digits = 3)
+  ) %>%
+  modify_header(
+    all_stat_cols() ~ "**{level}**  \nN= {n}",
+    estimate ~ "**SMD**" # rename Difference to SMD
+  ) %>% 
+  modify_column_hide(columns = ci) # remove 95%CI
+
+gts_post_match
+gts_post_match%>%
+  as_gt()    %>%
+  gtsave(filename = "Baseline_table_psm_SMD.docx")
+
+Baseline_table_psm <- df_post_match %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis~1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_table_psm")
+Baseline_table_psm
+Baseline_table_psm1 <- Baseline_table_psm %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_table_psm1, path = "./Baseline_table_psm.docx")
+
+
+fit_group_survival_BCLM <- survfit(Surv(follow_time_BCLM,death==1) ~ Treatment,  # 创建生存对象 
+                                   data = df_post_match)
+fit_group_survival_BCLM
+# n events median 0.95LCL 0.95UCL
+# Treatment=Ablation  14      7   49.3    36.2      NA
+# Treatment=Resection 14      4     NA    70.5      NA
+
+Overall.test (df_post_match$follow_time_BCLM, df_post_match$death, df_post_match$is_Ablation)		
+# PH assumption yield a result of: Pvalue =0.00293, chisq =8.84795.
+# 
+# method statistic  pvalue
+# 1                     Log-rank   1.85539 0.17316
+# 2               Gehan-Wilcoxon   0.04159 0.96682
+# 3                  Tarone-Ware  -0.62618 0.53120
+# 4                  Weighted KM   0.38136 0.70294
+# 5                          ABS   3.16837 0.00153
+# 6              ABS permutation   3.16837 0.03200
+# 7                    Two-stage        NA 0.23195
+# 8          Squared differences   1.45395 0.14596
+# 9 RMST (tau= 138.96747183642 ) -44.17101 0.01865
+
+
+ggsurvplot(fit_group_survival_BCLM, # 创建的拟合对象
+           data = df_post_match,  # 指定变量数据来源
+           #conf.int = TRUE, # 显示置信区间
+           pval =T, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(m)", # 指定x轴标签
+           #legend = c(0.8,0.75), # 指定图例位置
+           legend.labs = c("Ablation", "Resection"),
+           title = "Survival_Plot_BCLM_PSM" ,       
+           ggtheme = theme_bw(), # Change ggplot2 theme
+           palette = c("#ba494b", "#457bb9") # 设置图例标题，这里设置不显示标题，用空格替代
+) # 指定图例分组标签
+#IPTW
+
+cols_to_factor <- c( "Tumor", "N", "M", "AJCC_state", "Synchronicity", 
+                     
+                     "n_TACE", "n_HAIC", "n_Ablation", "pre_bone_M_treatment", 
+                     "pre_n_Chemo_group", "pre_n_Endocrine_therapy_group",  
+                     "pre_CDK46_targeted",  "pre_HER_2_targeted", 
+                     "pre_ICI", "pre_PARPi",  "pre_Targeted_therapy", 
+                     "pre_TKI_VEGFRi", "post_n_Chemo_group", 
+                     "post_n_Endocrine_therapy_group", "post_bone_M_treatment",  
+                     "post_CDK46_targeted", "post_HER_2_targeted",  "post_ICI",  
+                     "post_PARPi",  "post_Targeted_therapy",  
+                     "post_TKI_VEGFRi")
+
+# 使用 mutate_at 函数将指定列转换为因子
+data_RvsA2 <- data_RvsA1 %>%
+  mutate(across(all_of(cols_to_factor), as.factor),
+         Tumor = fct_relevel(Tumor,  "1", "2", "3", "4"),
+         status=fct_relevel(status,  "三阴型","Luminal B", "Luminal A", "HER-2阳性（HR阴性）", "HER-2阳性（HR阳性）"),
+         pre_n_Chemo_group=fct_relevel(pre_n_Chemo_group,"0","1-3",">3"),
+         post_n_Chemo_group=fct_relevel(post_n_Chemo_group,"0","1-3",">3"),
+         pre_n_Endocrine_therapy_group=fct_relevel(pre_n_Endocrine_therapy_group,"0","1-2",">2"),
+         post_n_Endocrine_therapy_group=fct_relevel(post_n_Endocrine_therapy_group,"0","1-2",">2"),) %>%
+  filter(! patient_sn=="0128048edd0be85a17a91facf8314c42") %>%
+  dplyr::mutate(Tumer_number_group = cut(as.numeric(Tumer_number), breaks = c(-Inf,  3, Inf), labels = c("1-3", ">3"),include.lowest = TRUE),)
+
+
+
+mod_ps <- 
+  glm(
+    is_Ablation ~ Tumer_number_group+Tumer_size+Tumer_position+AJCC_state+
+      pre_CDK46_targeted+pre_n_Chemo_group+pre_n_Endocrine_therapy_group+pre_HER_2_targeted+pre_ICI+pre_TKI_VEGFRi+post_bone_M_treatment+post_CDK46_targeted+post_n_Chemo_group+post_n_Endocrine_therapy_group+post_HER_2_targeted+post_ICI+post_PARPi+post_Targeted_therapy+post_TKI_VEGFRi
+    ,data = data_RvsA2, 
+    family = binomial
+  )
+library(Matching)
+svy_data_RvsA1 <-
+  data_RvsA2 %>%
+  dplyr::mutate(
+    ps = predict(mod_ps, type = "response"),
+    matching_weight = 
+      ifelse(is_Ablation==1,1/ps,1/(1-ps))
+  ) 
+dataIPTW<-  survey::svydesign(ids = ~1, data = svy_data_RvsA1, weights = ~ matching_weight)
+Baseline_table_IPTW <- dataIPTW %>%
+  tbl_svysummary(
+    by = "Treatment",
+    include = c(AgeWhenBC,AgeWhenBCLM,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+                pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi
+    ),
+    digits = list(all_categorical() ~ c(0, 1))
+  ) %>% add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  modify_caption("Baseline_table_IPTW") 
+
+Baseline_table_IPTW
+Baseline_table_IPTW1 <- Baseline_table_IPTW %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_table_IPTW1, path = "./Baseline_table_IPTW.docx")
+
+
+
+
+
+svy_data_RvsA1 <- as.data.frame(svy_data_RvsA1)
+survey::svycoxph(
+  Surv(follow_time_BCLM,death) ~ Treatment,
+  design = dataIPTW
+) %>%
+  tbl_regression(exponentiate=T)
+
+fit2.ipw <- survfit(Surv(follow_time_BCLM,death) ~ is_Ablation,  # 创建生存对象 
+                    data = svy_data_RvsA1,weights = matching_weight)
+
+fit2.ipw <- survfit(Surv(follow_time_BCLM,death) ~ is_Ablation,  # 创建生存对象 
+                    data = svy_data_RvsA1,weights = matching_weight)
+summary(fit2.ipw)
+fit2.ipw
+# records    n events median 0.95LCL 0.95UCL
+# is_Ablation=0      29 47.8   15.9   71.7    58.2      NA
+# is_Ablation=1      68 85.8   33.6   65.5    56.8      NA
+
+ggsurvplot(fit2.ipw, # 创建的拟合对象
+           data = svy_data_RvsA1,  # 指定变量数据来源
+           conf.int = TRUE, # 显示置信区间
+           pval = TRUE, # 添加P值
+           surv.median.line = "hv",  # 添加中位生存时间线
+           risk.table = TRUE, # 添加风险表
+           xlab = "Follow up time(y)", # 指定x轴标签
+           legend = c(0.8,0.75), # 指定图例位置
+           #title = "单个肿瘤肝转移3cm，切除 vs. 单药 匹配后", # 设置图例标题，这里设置不显示标题，用空格替代
+           #legend.labs = c("Drug", "Resection")
+)
+
+ss <- ggsurvplot(fit2.ipw, # 创建的拟合对象
+                 data = svy_data_RvsA1,  # 指定变量数据来源
+                 #conf.int = TRUE, # 显示置信区间
+                 pval =T, # 添加P值
+                 surv.median.line = "hv",  # 添加中位生存时间线
+                 risk.table = TRUE, # 添加风险表
+                 xlab = "Follow up time(m)", # 指定x轴标签
+                 #legend = c(0.8,0.75), # 指定图例位置
+                 title = "Survival_Plot_BCLM_IPTW", # 设置图例标题，这里设置不显示标题，用空格替代
+                 legend.labs = c("Resection", "Ablation") ,       
+                 ggtheme = theme_bw(), # Change ggplot2 theme
+                 palette = c("#ba494b", "#457bb9")) # 指定图例分组标签
+ss
+
+library(ggsurvfit)
+survfit(Surv(follow_time_BCLM,death) ~ is_Ablation,  # 创建生存对象 
+        data = svy_data_RvsA1,weights = matching_weight) %>%
+  ggsurvfit() +
+  add_pvalue("annotation", size = 12, pvalue_fun = \(x) format_p(x, digits = 3))
+
+
+
+
+res.cox <- coxph(Surv(follow_time_BCLM,death) ~ is_Ablation, data = data_RvsA1)
+summary(res.cox)
+
+# n= 94, number of events= 38 
+# 
+# coef exp(coef) se(coef)     z Pr(>|z|)
+# is_AblationResection 0.06052   1.06239  0.36950 0.164     0.87
+# 
+# exp(coef) exp(-coef) lower .95 upper .95
+# is_AblationResection     1.062     0.9413    0.5149     2.192
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+####合并####
+data_c <- rbind(mydata2,data_Resection)
+Baseline_Table <-  data_c %>%
+  as.data.frame() %>%
+  select(AgeWhenBC,AgeWhenBCLM,Time_between_metastasis,Tumer_number,Tumer_size,Tumer_position,status,Tumor,N,M,AJCC_state,Synchronicity,
+         pre_bone_M_treatment,pre_CDK46_targeted,pre_n_Chemo_group,pre_n_Endocrine_therapy_group,pre_HER_2_targeted,pre_ICI,pre_PARPi,pre_Targeted_therapy,pre_TKI_VEGFRi,post_bone_M_treatment,post_CDK46_targeted,post_n_Chemo_group,post_n_Endocrine_therapy_group,post_HER_2_targeted,post_ICI,post_PARPi,post_Targeted_therapy,post_TKI_VEGFRi,
+         is_Ablation) %>%
+  tbl_summary(by = is_Ablation,
+              digits = list(all_categorical() ~ c(0, 1),Time_between_metastasis ~ 1)) %>%
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>%
+  add_overall() %>%
+  modify_caption("Baseline_Table")
+
+Baseline_Table
+
+library(flextable)
+
+Baseline_Table1 <- Baseline_Table %>% as_flex_table()
+# 导出至当前工作路径下
+save_as_docx(Baseline_Table1, path = "./Baseline_Table.docx")
+
+
+fit_all_followup_BC <- quantile(survfit(Surv(follow_time_BC,death==0) ~ 1,  # 创建生存对象 
+                                        data = data_c))
+fit_all_followup_BC
+# $quantile
+# 25        50        75 
+# 48.39080  89.22072 155.48681 
+fit_all_followup_BCLM <- quantile(survfit(Surv(follow_time_BCLM,death==0) ~ 1,  # 创建生存对象 
+                                          data = data_c))
+fit_all_followup_BCLM
+# $quantile
+# 25       50       75 
+# 17.88499 39.63333 70.35406 
